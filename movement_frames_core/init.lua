@@ -1,0 +1,388 @@
+-- FRAME MOVER
+-- moves a frame in a direction 
+-- doesn't move itself
+-- can be moved by frames
+
+-- FRAME
+-- sticks to all blocks, including other frames
+-- each frame side can be made sticky/non-sticky
+
+
+local MODNAME = 'movement_frames';
+local MOD_READABLE_NAME = "Movement Frames"
+movement_frames_core = {} -- movers functions / properties
+
+
+
+function movement_frames_core.get_modname(return_readable_name)
+    if (return_readable_name) then return MOD_READABLE_NAME
+    else return MODNAME
+    end
+end
+
+
+function movement_frames_core.setting(setting, default)
+	if type(default) == "boolean" then
+		local read = minetest.settings:get_bool(MODNAME..":"..setting)
+		if read == nil then
+			return default
+		else
+			return read
+		end
+	elseif type(default) == "string" then
+		return minetest.settings:get(MODNAME..":"..setting) or default
+	elseif type(default) == "number" then
+		return tonumber(minetest.settings:get(MODNAME..":"..setting) or default)
+    end
+end
+
+
+--TODO remove
+function movement_frames_core.get_obj()
+    return movement_frames_core
+end
+
+function movement_frames_core.log(message, message_type, disable_color) 
+    local base_string = string.format("[%s] ", MOD_READABLE_NAME)
+
+    local message_types = {
+        error   = "\\e[31;1mERROR: \\e0m ",
+        warning = "\\e[33;1mWarning: \\e0m "
+    }
+    if (message_type ~= nil and message_types[message_type] ~= nil and disable_color ~= false) then
+        base_string = base_string .. message_types[message_type]
+    end
+
+    local output = base_string ..  message
+    print(output)
+end
+
+function movement_frames_core.dump(object, message_type, disable_color)
+    dumped_object = dump(object)
+
+    movement_frames_core.log(dumped_object, message_type, disable_color)
+end
+
+
+function movement_frames_core.register_entity(name, definition)
+    minetest.register_entity(MODNAME..":"..name, definition)
+end
+
+function movement_frames_core.register_node(name, node)
+    minetest.register_node(MODNAME..":"..name, node);
+end
+
+local function pos_string(pos, print) 
+    local result_string = string.format("(x: %d z:%d y:%d)", pos.x, pos.y, pos.z)
+    if (print) then 
+        print(result_string)
+    end
+
+    return result_string
+end
+
+local function node_replaceable(name)
+	if minetest.registered_nodes[name] then
+		return minetest.registered_nodes[name].buildable_to or false
+	end
+
+	return false
+end
+
+local function on_mvps_move(moved_nodes)
+	for _, callback in ipairs(mesecon.on_mvps_move) do
+		callback(moved_nodes)
+	end
+end
+
+-- Convert facedir value to xyz direction.
+function movement_frames_core.facedir_to_dir(facedir)
+    local dirs = {
+        [0] =  {x = 0, y = 1, z = 0},
+        [1] =  {x = 0, y = 0, z = 1},
+        [2] =  {x = 0, y = 0, z =-1},
+        [3] =  {x = 1, y = 0, z = 0},
+        [4] =  {x =-1, y = 0, z = 0},
+        [5] =  {x = 0, y =-1, z = 0},
+    }
+    local axisDirection = (facedir -(facedir%4) )/ 4
+    return dirs[axisDirection]
+end
+
+-- Convert an xyz dir table to a cardinal direction string
+-- x is east - west, y is down or up, and z is north - south.
+local function dir_to_cardinal(dir)
+    local dir_key
+    local dir_value
+    for k,v in pairs(dir) do
+        if v ~= 0 then 
+            dir_key = k
+            dir_value = v
+        end
+    end
+
+    if dir_key == 'x' then 
+        return  dir_value < 0 and  "east" or "west" 
+    elseif dir_key == 'y' then
+        return dir_value < 0 and "down" or "up"
+    else 
+        return dir_value < 0 and "north" or "south"
+    end
+end movement_frames_core.dir_to_cardinal = dir_to_cardinal
+
+-- Shortcuts for sanity
+local directions = {
+    ['+x'] = {x = 1, y = 0, z = 0},
+    ['-x'] = {x =-1, y = 0, z = 0},
+    ['+y'] = {x = 0, y = 1, z = 0},
+    ['-y'] = {x = 0, y =-1, z = 0},
+    ['+z'] = {x = 0, y = 0, z = 1},
+    ['-z'] = {x = 0, y = 0, z =-1},
+}
+
+
+-- Map rotation and direction to xyz direction
+axisDirs = {
+    [0] = {
+        [0] = directions['+z'],
+        [1] = directions['+x'],
+        [2] = directions['-z'],
+        [3] = directions['-x'],
+    },
+    [1] = {
+        [0] = directions['-y'],
+        [1] = directions['+x'],
+        [2] = directions['+y'],
+        [3] = directions['-x'],
+    },
+    [2] = {
+        [0] = directions['+y'],
+        [1] = directions['+x'],
+        [2] = directions['-y'],
+        [3] = directions['-x'],
+    },
+    [3] = {
+        [0] = directions['+z'],
+        [1] = directions['-y'],
+        [2] = directions['-z'],
+        [3] = directions['+y'],
+    },
+    [4] = {
+        [0] = directions['+z'],
+        [1] = directions['+y'],
+        [2] = directions['-z'],
+        [3] = directions['-y'],
+    },
+    [5] = {
+        [0] = directions['+z'],
+        [1] = directions['-x'],
+        [2] = directions['-z'],
+        [3] = directions['+x'],
+    },
+}
+
+
+
+
+
+
+-- New code for advanced movers
+
+-- Get the full structure to move 
+function movement_frames_core.mvps_get_structure(pos, dir, maximum, all_pull_sticky)
+	-- determine the number of nodes to be pushed
+    local nodes = {}
+    local frames = {}
+
+    local start_pos = {
+        x = pos.x,
+        z = pos.z ,
+        y = pos.y,
+    };
+	local frontiers = {start_pos}
+    
+    local start_node = minetest.get_node(start_pos)
+
+    --Movers can only move frames, if the first block isn't a frame, return.
+    if not start_node.name == MODNAME..":frame" then return  nil end
+
+	while #frontiers > 0 do
+		local np = frontiers[1]
+        local nn = minetest.get_node(np)
+        
+        --if not empty air
+        if not node_replaceable(nn.name) then
+            
+            --add node to move list
+			table.insert(nodes, {node = nn, pos = np})
+            if #nodes > maximum then return nil end
+
+			-- add connected nodes to frontiers, connected is a vector list
+			-- the vectors must be absolute positions
+            local connected = {}
+            
+            if minetest.registered_nodes[nn.name] and minetest.registered_nodes[nn.name].mvps_sticky 
+            then
+				connected = minetest.registered_nodes[nn.name].mvps_sticky(np, nn)
+			end
+
+			table.insert(connected, vector.add(np, dir))
+
+			-- If adjacent node is sticky block and connects add that
+			-- position to the connected table
+			for _, r in ipairs(mesecon.rules.alldirs) do
+				local adjpos = vector.add(np, r)
+                local adjnode = minetest.get_node(adjpos)
+                
+                if minetest.registered_nodes[adjnode.name] and minetest.registered_nodes[adjnode.name].mvps_sticky 
+                then
+                    local sticksto = minetest.registered_nodes[adjnode.name].mvps_sticky(adjpos, adjnode)
+
+					-- connects to this position?
+					for _, link in ipairs(sticksto) do
+						if vector.equals(link, np) then
+							table.insert(connected, adjpos)
+						end
+					end
+				end
+			end
+
+			if all_pull_sticky then
+				table.insert(connected, vector.subtract(np, dir))
+			end
+
+			-- Make sure there are no duplicates in frontiers / nodes before
+			-- adding nodes in "connected" to frontiers
+			for _, cp in ipairs(connected) do
+                local duplicate = false
+                
+				for _, rp in ipairs(nodes) do
+					if vector.equals(cp, rp.pos) then
+						duplicate = true
+					end
+                end
+                
+				for _, fp in ipairs(frontiers) do
+					if vector.equals(cp, fp) then
+						duplicate = true
+					end
+                end
+                
+				if not duplicate then
+					table.insert(frontiers, cp)
+				end
+			end
+		end
+		table.remove(frontiers, 1)
+    end
+
+	return nodes
+end
+
+
+
+-- pos: pos of mvps; stackdir: direction of building the stack
+-- movedir: direction of actual movement
+-- maximum: maximum nodes to be pushed
+-- all_pull_sticky: All nodes are sticky in the direction that they are pulled from
+
+function movement_frames_core.move_structure(pos, stackdir, movedir, maximum, all_pull_sticky)
+	local nodes = movement_frames_core.mvps_get_structure(pos, movedir, maximum, all_pull_sticky)
+
+	if not nodes then return end
+	-- determine if one of the nodes blocks the push / pull
+	for id, n in ipairs(nodes) do
+		if mesecon.is_mvps_stopper(n.node, movedir, nodes, id) then
+			return
+		end
+	end
+
+	-- remove all nodes
+    for _, n in ipairs(nodes) do
+        local nmeta =  minetest.get_meta(n.pos)
+        n.meta = nmeta:to_table()
+        local minv = nmeta:get_inventory();
+        local mlists = minv:get_lists();
+        local inv = {}
+        for listname, list in pairs(mlists) do
+            inv[listname] = {}
+            local size = minv:get_size(listname)
+            for i=1,size do
+                local stack = minv:get_stack(listname, i)
+                if stack:get_count() > 0 then 
+                    table.insert(inv[listname], stack)
+                end
+            end
+        end
+        
+            
+        movement_frames_core.log("INVS " .. dump(n.inv))
+        
+    
+        local node_timer = minetest.get_node_timer(n.pos)
+        if node_timer:is_started() then
+            n.node_timer = {node_timer:get_timeout(), node_timer:get_elapsed()}
+        end
+        minetest.remove_node(n.pos)
+      
+        
+	end
+
+	-- update mesecons for removed nodes ( has to be done after all nodes have been removed )
+	for _, n in ipairs(nodes) do
+		mesecon.on_dignode(n.pos, n.node)
+    end
+    
+    -- Add nodes back as node-entities, to visualize movement
+    local node_entities = {}
+    for _,n in ipairs(nodes) do
+        local tile = minetest.registered_nodes[n.node.name].tiles[1]
+        local staticdata = minetest.write_json({
+            tiles={
+                minetest.registered_nodes[n.node.name].tiles[1],
+                minetest.registered_nodes[n.node.name].tiles[1],
+                minetest.registered_nodes[n.node.name].tiles[1],
+                minetest.registered_nodes[n.node.name].tiles[1],
+                minetest.registered_nodes[n.node.name].tiles[1],
+                minetest.registered_nodes[n.node.name].tiles[1],
+            },
+            moveDir=movedir,
+            pos=pos,
+            newPos=vector.add(n.pos, movedir),
+            node=n,
+            moveStack=nodes
+        })
+
+        local nEntity = minetest.add_entity(n.pos, MODNAME..":node_entity", staticdata)
+        table.insert(node_entities, nEntity)
+    end
+
+	-- -- add nodes
+	-- for _, n in ipairs(nodes) do
+	-- 	local np = vector.add(n.pos, movedir)
+
+	-- 	minetest.set_node(np, n.node)
+	-- 	minetest.get_meta(np):from_table(n.meta)
+	-- 	if n.node_timer then
+	-- 		minetest.get_node_timer(np):set(unpack(n.node_timer))
+	-- 	end
+	-- end
+
+	local moved_nodes = {}
+	local oldstack = mesecon.tablecopy(nodes)
+	for i in ipairs(nodes) do
+		moved_nodes[i] = {}
+		moved_nodes[i].oldpos = nodes[i].pos
+		nodes[i].pos = vector.add(nodes[i].pos, movedir)
+		moved_nodes[i].pos = nodes[i].pos
+		moved_nodes[i].node = nodes[i].node
+		moved_nodes[i].meta = nodes[i].meta
+		moved_nodes[i].node_timer = nodes[i].node_timer
+	end
+
+	on_mvps_move(moved_nodes)
+
+	return true, nodes, oldstack
+end
+
+

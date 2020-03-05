@@ -1,0 +1,8 @@
+[movement_frames]
+movement_frames.mover_activation_interval (Mover Activation Interval) float 0.3 0.1 10
+
+movement_frames.mover_speed (Mover Speed [blocks per second]) float 1 0.1 10
+
+movement_frames.mover_capacity (Mover Block Capacity) int 30 1 500
+
+
