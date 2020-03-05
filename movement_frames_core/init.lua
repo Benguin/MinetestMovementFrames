@@ -1,12 +1,3 @@
--- FRAME MOVER
--- moves a frame in a direction 
--- doesn't move itself
--- can be moved by frames
-
--- FRAME
--- sticks to all blocks, including other frames
--- each frame side can be made sticky/non-sticky
-
 
 local MODNAME = 'movement_frames';
 local MOD_READABLE_NAME = "Movement Frames"
@@ -235,8 +226,6 @@ function movement_frames_core.mvps_get_structure(pos, dir, maximum, all_pull_sti
 				connected = minetest.registered_nodes[nn.name].mvps_sticky(np, nn)
 			end
 
-            -- movement_frames_core.dump(np)
-            -- movement_frames_core.dump(dir)
 			table.insert(connected, vector.add(np, dir))
 
 			-- If adjacent node is sticky block and connects add that
@@ -290,49 +279,6 @@ function movement_frames_core.mvps_get_structure(pos, dir, maximum, all_pull_sti
 	return nodes
 end
 
--- Accept inventory ref, return ref of copied inventory
-function inventory_to_table(inventory) 
-    local inv = {}
-    local lists = inventory:get_lists()
-    if (lists) then
-        for listname, stacks in pairs(lists) do
-            inv[listname] = {
-                size= 1,
-                contents={}
-            }
-            inv[listname].size= inventory:get_size(listname)
-            -- movement_frames_core.log(listname, 'error')
-            -- movement_frames_core.dump(stacks, 'error')
-            for index, stack in ipairs(stacks) do
-                -- movement_frames_core.log(index, 'error')
-                -- movement_frames_core.dump(stack, 'error')
-                local stack_table = stack:to_table()
-                -- movement_frames_core.log("STACK TABLE" .. stack:to_string())
-                -- movement_frames_core.dump(stack_table, 'error')
-                inv[listname].contents[index] = stack_table or {}
-            end
-        end
-    end
-    return inv
-end
-
-function movement_frames_core.set_inventory_from_table(inventory, table)
-    movement_frames_core.dump(table)
-    local lists = {}
-
-
-    for listname, list in ipairs(table) do
-        lists[listname] = {}
-        for index, stackstring in list.contents do
-            lists[listname][index] = ItemStack(stackstring)
-        end
-        inventory:set_size(listname, list.size)
-        
-    end
-    inventory:set_lists(lists)
-end
-
-
 -- pos: pos of mvps; stackdir: direction of building the stack
 -- movedir: direction of actual movement
 -- maximum: maximum nodes to be pushed
@@ -353,10 +299,6 @@ function movement_frames_core.move_structure(pos, stackdir, movedir, maximum, al
     for _, n in ipairs(nodes) do
         local nmeta =  minetest.get_meta(n.pos)
         local minv = nmeta:get_inventory();
-        if (minv) then
-            n.inv =  inventory_to_table(minv)
-            -- movement_frames_core.log("INVS " .. dump(inv), "warning")
-        end
 
         n.meta = nmeta:to_table()
 

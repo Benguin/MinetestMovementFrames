@@ -16,14 +16,13 @@ local function move_frames(pos, node, rulename)
     local direction = getDirectionToMove(node.param2)
     local frontpos = vector.add(pos, facingDirection)
     
-    -- mfcore.log(string.format("NEW DIRECTION x:%d y:%d z:%d", direction.x, direction.y, direction.z))
-
     -- ### Step 1: Push nodes in front ###
     local success, stack, oldstack = mfcore.move_structure(frontpos, direction, direction, max_push)
     if not success then
         minetest.get_node_timer(pos):start(timer_interval)
         return
     end
+
     -- mesecon.mvps_move_objects(frontpos, direction, oldstack)
 
     -- ### Step 4: Let things fall ###
@@ -153,10 +152,6 @@ mfcore.register_node("frame", {
 
     end,
 
-    on_destruct = function(pos)
-        mfcore.log("on_destruct: ")
-    end,
-
     on_rightclick = function(pos, node, clicker, itemstack, pointed_thing)
         local dir = {
             x= pointed_thing.above.x - pointed_thing.under.x,
@@ -174,8 +169,6 @@ mfcore.register_node("frame", {
         end
      
         meta:set_string("sticky", minetest.write_json(sticky))
-        mfcore.dump(pointed_thing)
-        mfcore.dump(node)
     end
 })
 
@@ -205,20 +198,16 @@ mfcore.register_entity("node_entity", {
         local data = minetest.parse_json(staticdata)
 
         if (not data) then 
-            mfcore.log("Node entity initialised without staticdata", 'warning')
+            mfcore.log("Imitation Node entity initialised without staticdata", 'error')
             mfcore.dump(staticdata)
             return
         end
-        mfcore.log("NODE_ENTITY_ACTIVATE")
-        mfcore.dump(data, "error")
+
         self.data = data
-        self.last_pos = nil
 
         self.object:set_properties({
             textures=data.tiles,
         })
-
- 
 
         self:move_self()
     end,
@@ -248,6 +237,7 @@ mfcore.register_entity("node_entity", {
         for k, player in ipairs(minetest.get_connected_players()) do
             local playerPos =  player:get_pos()
             local posDiff = vector.subtract(self.object:get_pos(), playerPos)
+
             if( math.abs(posDiff.x) <= 0.5 and  math.abs(posDiff.z) <= 0.5)  and posDiff.y > 0.1 and posDiff.y < 3 then
                 mfcore.log("Attaching player", player:get_entity_name())
                 player:set_attach(self.object, '', {x=posDiff.x, z=posDiff.z, y=posDiff.y+1}, {x=0, y=0, z=0});
@@ -259,6 +249,7 @@ mfcore.register_entity("node_entity", {
         self.dir_key = dir_key;
 
         local np = vector.add(obj_pos, dir)
+
         -- Move only if destination is not solid or object is inside stack:
         local nn = minetest.get_node(np)
         local node_def = minetest.registered_nodes[nn.name]
@@ -272,11 +263,13 @@ mfcore.register_entity("node_entity", {
         end
     end,
 
+    -- Become a real block again
     anchor_self= function(self)
         minetest.set_node(self.data.newPos, self.data.node.node)
         local meta = minetest.get_meta(self.data.newPos)
         meta:from_table(self.data.node.meta)
-        for k,player in pairs(self.attached_players) do
+
+        for k, player in pairs(self.attached_players) do
             player.set_detach()
         end
         self.object:remove()
@@ -285,6 +278,7 @@ mfcore.register_entity("node_entity", {
     on_step= function(self, time)
         local curPos = self.object:get_pos()
         local sign
+
         if (not self.data or not self.dir_value ) then return end
 
         if (self.dir_value < 0) then sign = 1 else sign = -1 end
@@ -298,10 +292,6 @@ mfcore.register_entity("node_entity", {
                 self:anchor_self()
             end
         end
-        
-        -- self.last_pos = curPos[self.dir_key]
-
     end
-
 })
 
