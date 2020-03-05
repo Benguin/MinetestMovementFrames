@@ -329,7 +329,7 @@ function movement_frames_core.move_structure(pos, stackdir, movedir, maximum, al
 		mesecon.on_dignode(n.pos, n.node)
     end
     
-    local should_animate_movement = movement_frames_core.setting('animate_movement', false)
+    local should_animate_movement = movement_frames_core.setting('animate_movement', true)
 
     if (should_animate_movement) then
         -- Add nodes back as node-entities, to visualize movement
