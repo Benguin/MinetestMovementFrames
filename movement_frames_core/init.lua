@@ -46,14 +46,14 @@ function movement_frames_core.log(message, message_type, disable_color)
     local base_string = string.format("[%s] ", MOD_READABLE_NAME)
 
     local message_types = {
-        error   = "\\e[31;1mERROR: \\e0m ",
-        warning = "\\e[33;1mWarning: \\e0m "
+        error   = "\27[31;1mERROR: \27[0m ",
+        warning = "\27[33;1mWarning: \27[0m "
     }
     if (message_type ~= nil and message_types[message_type] ~= nil and disable_color ~= false) then
         base_string = base_string .. message_types[message_type]
     end
 
-    local output = base_string ..  message
+    local output = base_string ..  (message or 'nil')
     print(output)
 end
 
@@ -68,8 +68,12 @@ function movement_frames_core.register_entity(name, definition)
     minetest.register_entity(MODNAME..":"..name, definition)
 end
 
-function movement_frames_core.register_node(name, node)
-    minetest.register_node(MODNAME..":"..name, node);
+function movement_frames_core.register_node(name, definition)
+    minetest.register_node(MODNAME..":"..name, definition);
+end
+
+function movement_frames_core.register_craftitem(name, definition)
+    minetest.register_craftitem(MODNAME..":"..name, definition)
 end
 
 local function pos_string(pos, print) 
@@ -192,20 +196,25 @@ axisDirs = {
 function movement_frames_core.mvps_get_structure(pos, dir, maximum, all_pull_sticky)
 	-- determine the number of nodes to be pushed
     local nodes = {}
-    local frames = {}
 
     local start_pos = {
         x = pos.x,
         z = pos.z ,
         y = pos.y,
     };
+
 	local frontiers = {start_pos}
     
     local start_node = minetest.get_node(start_pos)
 
     --Movers can only move frames, if the first block isn't a frame, return.
-    if not start_node.name == MODNAME..":frame" then return  nil end
+    local can_move_any  = movement_frames_core.setting('can_move_any', false)
+    local is_frame = start_node.name == MODNAME..":frame"
 
+    if (not can_move_any and  not is_frame) then return nodes end
+    
+
+    -- Get attached blocks
 	while #frontiers > 0 do
 		local np = frontiers[1]
         local nn = minetest.get_node(np)
@@ -226,6 +235,8 @@ function movement_frames_core.mvps_get_structure(pos, dir, maximum, all_pull_sti
 				connected = minetest.registered_nodes[nn.name].mvps_sticky(np, nn)
 			end
 
+            -- movement_frames_core.dump(np)
+            -- movement_frames_core.dump(dir)
 			table.insert(connected, vector.add(np, dir))
 
 			-- If adjacent node is sticky block and connects add that
@@ -279,6 +290,47 @@ function movement_frames_core.mvps_get_structure(pos, dir, maximum, all_pull_sti
 	return nodes
 end
 
+-- Accept inventory ref, return ref of copied inventory
+function inventory_to_table(inventory) 
+    local inv = {}
+    local lists = inventory:get_lists()
+    if (lists) then
+        for listname, stacks in pairs(lists) do
+            inv[listname] = {
+                size= 1,
+                contents={}
+            }
+            inv[listname].size= inventory:get_size(listname)
+            -- movement_frames_core.log(listname, 'error')
+            -- movement_frames_core.dump(stacks, 'error')
+            for index, stack in ipairs(stacks) do
+                -- movement_frames_core.log(index, 'error')
+                -- movement_frames_core.dump(stack, 'error')
+                local stack_table = stack:to_table()
+                -- movement_frames_core.log("STACK TABLE" .. stack:to_string())
+                -- movement_frames_core.dump(stack_table, 'error')
+                inv[listname].contents[index] = stack_table or {}
+            end
+        end
+    end
+    return inv
+end
+
+function movement_frames_core.set_inventory_from_table(inventory, table)
+    movement_frames_core.dump(table)
+    local lists = {}
+
+
+    for listname, list in ipairs(table) do
+        lists[listname] = {}
+        for index, stackstring in list.contents do
+            lists[listname][index] = ItemStack(stackstring)
+        end
+        inventory:set_size(listname, list.size)
+        
+    end
+    inventory:set_lists(lists)
+end
 
 
 -- pos: pos of mvps; stackdir: direction of building the stack
@@ -300,24 +352,26 @@ function movement_frames_core.move_structure(pos, stackdir, movedir, maximum, al
 	-- remove all nodes
     for _, n in ipairs(nodes) do
         local nmeta =  minetest.get_meta(n.pos)
-        n.meta = nmeta:to_table()
         local minv = nmeta:get_inventory();
-        local mlists = minv:get_lists();
-        local inv = {}
-        for listname, list in pairs(mlists) do
-            inv[listname] = {}
-            local size = minv:get_size(listname)
-            for i=1,size do
-                local stack = minv:get_stack(listname, i)
-                if stack:get_count() > 0 then 
-                    table.insert(inv[listname], stack)
-                end
+        if (minv) then
+            n.inv =  inventory_to_table(minv)
+            -- movement_frames_core.log("INVS " .. dump(inv), "warning")
+        end
+
+        n.meta = nmeta:to_table()
+
+        --Now we need to copy the inventory; we can't send refs through 
+        -- staticdata, so convert it to a table of itemstack strings
+        local newInv = {}
+
+        for listname, list in pairs(n.meta.inventory) do
+            newInv[listname] = {}
+            for key, itemstack in ipairs(list) do
+                newInv[listname][key] = itemstack:to_string()
             end
         end
-        
-            
-        movement_frames_core.log("INVS " .. dump(n.inv))
-        
+
+        n.meta.inventory = newInv
     
         local node_timer = minetest.get_node_timer(n.pos)
         if node_timer:is_started() then
@@ -333,40 +387,48 @@ function movement_frames_core.move_structure(pos, stackdir, movedir, maximum, al
 		mesecon.on_dignode(n.pos, n.node)
     end
     
-    -- Add nodes back as node-entities, to visualize movement
-    local node_entities = {}
-    for _,n in ipairs(nodes) do
-        local tile = minetest.registered_nodes[n.node.name].tiles[1]
-        local staticdata = minetest.write_json({
-            tiles={
-                minetest.registered_nodes[n.node.name].tiles[1],
-                minetest.registered_nodes[n.node.name].tiles[1],
-                minetest.registered_nodes[n.node.name].tiles[1],
-                minetest.registered_nodes[n.node.name].tiles[1],
-                minetest.registered_nodes[n.node.name].tiles[1],
-                minetest.registered_nodes[n.node.name].tiles[1],
-            },
-            moveDir=movedir,
-            pos=pos,
-            newPos=vector.add(n.pos, movedir),
-            node=n,
-            moveStack=nodes
-        })
+    local should_animate_movement = movement_frames_core.setting('animate_movement', false)
 
-        local nEntity = minetest.add_entity(n.pos, MODNAME..":node_entity", staticdata)
-        table.insert(node_entities, nEntity)
+    if (should_animate_movement) then
+        -- Add nodes back as node-entities, to visualize movement
+        local node_entities = {}
+        for _,n in ipairs(nodes) do
+            local tile = minetest.registered_nodes[n.node.name].tiles[1]
+            local static_data_table = {
+                tiles={
+                    tile,
+                    tile,
+                    tile,
+                    tile,
+                    tile,
+                    tile,
+                },
+                moveDir=movedir,
+                pos=pos,
+                newPos=vector.add(n.pos, movedir),
+                node=n,
+                moveStack=nodes
+            }
+    
+            local staticdata = minetest.write_json(static_data_table)
+    
+            local nEntity = minetest.add_entity(n.pos, MODNAME..":node_entity", staticdata)
+            table.insert(node_entities, nEntity)
+        end
+    else
+        -- add nodes back
+        for _, n in ipairs(nodes) do
+        	local np = vector.add(n.pos, movedir)
+    
+        	minetest.set_node(np, n.node)
+        	minetest.get_meta(np):from_table(n.meta)
+        	if n.node_timer then
+        		minetest.get_node_timer(np):set(unpack(n.node_timer))
+        	end
+        end
+
     end
 
-	-- -- add nodes
-	-- for _, n in ipairs(nodes) do
-	-- 	local np = vector.add(n.pos, movedir)
-
-	-- 	minetest.set_node(np, n.node)
-	-- 	minetest.get_meta(np):from_table(n.meta)
-	-- 	if n.node_timer then
-	-- 		minetest.get_node_timer(np):set(unpack(n.node_timer))
-	-- 	end
-	-- end
 
 	local moved_nodes = {}
 	local oldstack = mesecon.tablecopy(nodes)

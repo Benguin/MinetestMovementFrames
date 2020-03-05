@@ -11,7 +11,7 @@ function getDirectionToMove(facedir)
 end
 
 
-local function movestone_move(pos, node, rulename)
+local function move_frames(pos, node, rulename)
     local facingDirection = mfcore.facedir_to_dir(node.param2)  
     local direction = getDirectionToMove(node.param2)
     local frontpos = vector.add(pos, facingDirection)
@@ -55,7 +55,7 @@ mfcore.register_node("mover", {
             action_on = function(pos, node, rulename)
                 local node_timer = minetest.get_node_timer(pos)
                 if rulename and not node_timer:is_started() then
-                    movestone_move(pos, node, rulename)
+                    move_frames(pos, node, rulename)
                     node_timer:start(timer_interval)
                 end
             end,
@@ -95,7 +95,6 @@ mfcore.register_node("mover", {
 
 
 
---Frame
 mfcore.register_node("frame", {
     description = "Mover Frame",
     tiles = {
@@ -109,8 +108,13 @@ mfcore.register_node("frame", {
 
     mvps_sticky = function (pos, node)
         local meta = minetest.get_meta(pos)
-        local sticky = minetest.parse_json(meta:get_string("sticky"))
+        local meta_json = meta:get_string("sticky") 
 		local connected = {}
+        
+        if (meta_json == "") then return connected end
+
+        local sticky = minetest.parse_json(meta_json)
+        
         for _, r in ipairs(mesecon.rules.alldirs) do
             local cardinal = mfcore.dir_to_cardinal(r)
             if sticky[cardinal] then
@@ -123,13 +127,18 @@ mfcore.register_node("frame", {
                 end
             end
 		end
-		return connected
+        
+        return connected
     end,
 
     on_construct = function(pos)
-        mfcore.log("on_construct: ")
         local meta = minetest.get_meta(pos)
-        local sticky = minetest.parse_json(meta:get_string("sticky"))
+        local meta_json = meta:get_string("sticky") 
+        local sticky = nil
+        if (meta_json ~= "") then 
+            sticky = minetest.parse_json(meta_json)
+        end
+        
         if (sticky == nil) then
             sticky= {
                 north = true,
@@ -165,12 +174,11 @@ mfcore.register_node("frame", {
         end
      
         meta:set_string("sticky", minetest.write_json(sticky))
-        mfcore.log(dump(pointed_thing))
-        mfcore.log(dump(node))
+        mfcore.dump(pointed_thing)
+        mfcore.dump(node)
     end
 })
 
--- REGISTER ENTITIES:
 mfcore.register_entity("node_entity", {
     visual= "cube",
     -- physical=true,
@@ -196,8 +204,13 @@ mfcore.register_entity("node_entity", {
     on_activate = function(self, staticdata) 
         local data = minetest.parse_json(staticdata)
 
-        if (not data) then return end
-
+        if (not data) then 
+            mfcore.log("Node entity initialised without staticdata", 'warning')
+            mfcore.dump(staticdata)
+            return
+        end
+        mfcore.log("NODE_ENTITY_ACTIVATE")
+        mfcore.dump(data, "error")
         self.data = data
         self.last_pos = nil
 
@@ -236,7 +249,7 @@ mfcore.register_entity("node_entity", {
             local playerPos =  player:get_pos()
             local posDiff = vector.subtract(self.object:get_pos(), playerPos)
             if( math.abs(posDiff.x) <= 0.5 and  math.abs(posDiff.z) <= 0.5)  and posDiff.y > 0.1 and posDiff.y < 3 then
-                mfcore.log("ATtaching player", player:get_entity_name())
+                mfcore.log("Attaching player", player:get_entity_name())
                 player:set_attach(self.object, '', {x=posDiff.x, z=posDiff.z, y=posDiff.y+1}, {x=0, y=0, z=0});
                 table.insert(self.attached_players, player)
             end
@@ -261,7 +274,8 @@ mfcore.register_entity("node_entity", {
 
     anchor_self= function(self)
         minetest.set_node(self.data.newPos, self.data.node.node)
-        minetest.get_meta(self.data.newPos):from_table(self.data.node.meta)
+        local meta = minetest.get_meta(self.data.newPos)
+        meta:from_table(self.data.node.meta)
         for k,player in pairs(self.attached_players) do
             player.set_detach()
         end
